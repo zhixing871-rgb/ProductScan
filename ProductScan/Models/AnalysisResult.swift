@@ -3,6 +3,7 @@ import SwiftUI
 /// AI 返回的结构化分析结果（字段与 AnalysisService 中的 JSON Schema 一一对应）
 struct AnalysisResult: Codable, Hashable {
     var category: String?               // AI 自动判断的类别：food / cosmetic / clothing / household / other
+    var productType: String?            // 具体商品类型，如「智能手机」「酸奶」「保温杯」
     var productName: String
     var verdict: String                 // 一句话结论
     var summary: String                 // 总体分析
@@ -29,7 +30,7 @@ struct AnalysisResult: Codable, Hashable {
 /// 这里全部给默认值，避免一个字段不对就整体解析失败。
 extension AnalysisResult {
     private enum CodingKeys: String, CodingKey {
-        case category, productName, verdict, summary, primaryScore, primaryScoreReason,
+        case category, productType, productName, verdict, summary, primaryScore, primaryScoreReason,
              valueScore, valueScoreReason, ingredients, shortTermEffects, longTermEffects,
              suitableFor, avoidFor, company, alternatives, confidence, detectedPrice, detectedCurrency,
              personalVerdict, personalWarnings, personalAdvice
@@ -38,6 +39,7 @@ extension AnalysisResult {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         category = c.looseString(.category)
+        productType = c.looseString(.productType)
         productName = c.looseString(.productName) ?? ""
         verdict = c.looseString(.verdict) ?? ""
         summary = c.looseString(.summary) ?? ""

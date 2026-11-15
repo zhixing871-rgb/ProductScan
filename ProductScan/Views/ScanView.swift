@@ -26,22 +26,6 @@ struct ScanView: View {
                     .pickerStyle(.segmented)
                 }
 
-                Section {
-                    Picker("类别", selection: $vm.category) {
-                        Text("自动").tag(ProductCategory?.none)
-                        ForEach(ProductCategory.allCases) { c in
-                            Text(c.shortTitle).tag(ProductCategory?.some(c))
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("商品类别")
-                } footer: {
-                    if vm.category == nil {
-                        Text("自动：AI 会判断是食品、护肤品、服装还是日化用品")
-                    }
-                }
-
                 if vm.mode == .photo {
                     photoSection
                 } else {
@@ -190,7 +174,7 @@ struct ScanView: View {
         } header: {
             Text("配料表 / 成分标签")
         } footer: {
-            Text("最多 \(ScanViewModel.maxPhotos) 张：建议分别拍商品正面、配料表/成分表、营养成分表；衣服拍洗标。")
+            Text("任何商品都可以拍，AI 会自动识别类别。最多 \(ScanViewModel.maxPhotos) 张：建议拍商品正面，再拍配料表、营养成分表、洗标或参数铭牌。")
         }
     }
 

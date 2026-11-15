@@ -176,6 +176,21 @@ final class MiscTests: XCTestCase {
         XCTAssertEqual(openai?.outputTokens, 300)
     }
 
+    func testCategoryMapping() {
+        XCTAssertEqual(ProductCategory(loose: "other"), .other)
+        XCTAssertEqual(ProductCategory(loose: "电子产品"), .other)
+        XCTAssertEqual(ProductCategory(loose: "食品饮料"), .food)
+        XCTAssertNil(ProductCategory(loose: ""))
+    }
+
+    func testOtherProductTypeDecoded() throws {
+        let dict = try XCTUnwrap(AnalysisService.normalize(["category": "other", "productType": "智能手机",
+                                                            "verdict": "做工扎实", "primaryScore": 4]))
+        let r = try JSONDecoder().decode(AnalysisResult.self, from: JSONSerialization.data(withJSONObject: dict))
+        XCTAssertEqual(r.productType, "智能手机")
+        XCTAssertEqual(ProductCategory(loose: r.category), .other)
+    }
+
     func testCostEstimate() {
         let usage = TokenUsage(inputTokens: 1_000_000, outputTokens: 0)
         XCTAssertEqual(Pricing.costText(model: "claude-sonnet-5-5", usage: usage), "约 $2.000")

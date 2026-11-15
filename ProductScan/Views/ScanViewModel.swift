@@ -241,7 +241,7 @@ enum AnalysisRunner {
         let result = output.result
 
         // 用户手动选的类别优先，否则用 AI 识别出的类别
-        let finalCategory = input.category ?? ProductCategory(loose: result.category) ?? .food
+        let finalCategory = input.category ?? ProductCategory(loose: result.category) ?? .other
         let finalPrice = input.price ?? result.detectedPrice
         let finalCurrency = input.price == nil ? (result.detectedCurrency ?? input.currency) : input.currency
         let record = ScanRecord(

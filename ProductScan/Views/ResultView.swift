@@ -55,7 +55,7 @@ struct ResultView: View {
                 }
 
                 if !r.ingredients.isEmpty {
-                    Section("成分解读（\(r.ingredients.count)）") {
+                    Section("\(record.category.ingredientsLabel)（\(r.ingredients.count)）") {
                         ForEach(Array(r.ingredients.enumerated()), id: \.offset) { _, item in
                             IngredientRow(item: item)
                         }
@@ -171,7 +171,8 @@ struct ResultView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Label(record.category.title, systemImage: record.category.icon)
+                    Label(r.productType.map { "\(record.category.title) · \($0)" } ?? record.category.title,
+                          systemImage: record.category.icon)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(r.productName).font(.headline)

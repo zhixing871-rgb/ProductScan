@@ -48,7 +48,7 @@ final class ScanRecord {
         self.sourceURL = sourceURL
     }
 
-    var category: ProductCategory { ProductCategory(rawValue: categoryRaw) ?? .food }
+    var category: ProductCategory { ProductCategory(rawValue: categoryRaw) ?? .other }
 
     var usage: TokenUsage? {
         guard let i = inputTokens, let o = outputTokens else { return nil }

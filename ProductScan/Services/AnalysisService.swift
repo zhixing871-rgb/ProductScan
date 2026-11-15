@@ -357,9 +357,11 @@ struct AnalysisService {
                 .map { "【\($0.rawValue) · \($0.title)】\n\($0.analysisFocus)" }
                 .joined(separator: "\n\n")
             categoryBlock = """
-            商品类别：用户未指定。请先根据\(hasImage ? "照片和" : "")文字自动判断商品属于哪一类：\
-            food（食品饮料）/ cosmetic（化妆护肤）/ clothing（服装纺织）/ household（日化清洁），\
-            填入 category 字段，再按该类别的分析要点分析。如果都不是可分析的商品，category 填 other。
+            商品类别：由你根据\(hasImage ? "照片和" : "")文字自动判断，可以是任何种类的商品。先确定具体商品类型填入 productType\
+            （如「酸奶」「洗面奶」「羽绒服」「洗衣液」「智能手机」「儿童积木」），再把 category 填为：\
+            food（食品饮料、保健食品）/ cosmetic（化妆护肤、个人洗护）/ clothing（服装鞋帽、床品纺织）/ \
+            household（日化清洁）/ other（以上之外的所有商品，如电子产品、家电、玩具、家具、厨具、母婴、文具、宠物用品等），\
+            然后按对应类别的分析要点分析。只有照片/文字里完全没有可识别的商品时，category 才填 other 且说明无法分析。
 
             各类别分析要点：
             \(all)
@@ -431,14 +433,17 @@ struct AnalysisService {
     }
 
     static let systemPrompt = """
-    你是「成分扫描」App 内置的商品分析助手，一个专注、严谨的消费品成分分析师。
-    你的职责范围仅限于：食品、化妆品/护肤品、服装纺织品、日化清洁用品的成分分析，以及这些商品的品牌/生产公司信息。
-    与此无关的请求一律不处理（如果输入明显不是商品，category 填 other，在 verdict 中说明无法分析，分数给 1，confidence 为“低”）。
+    你是「成分扫描」App 内置的商品分析助手，一个专注、严谨的消费品分析师。
+    你可以分析任何种类的商品：食品、化妆护肤、服装纺织、日化清洁用品看成分和配料；电子产品、家电、玩具、家具、厨具、\
+    母婴用品等其他商品看材质、部件、关键参数、安全认证和做工；同时给出品牌/生产公司信息。
+    只有当输入里完全没有可识别的商品（例如风景、人像、与购物无关的问题）时才不分析：category 填 other，productType 填「非商品」，\
+    在 verdict 中说明无法分析，分数给 1，confidence 为“低”。
 
     分析原则：
     1. 以监管机构（中国国家卫健委/市场监管总局、欧盟 EFSA/SCCS、美国 FDA、IARC 等）和主流科学共识为依据；
        有争议的结论要明确说是“有争议/证据有限”，不要危言耸听，也不要替商家洗白。
     2. 配料表按含量从高到低排列，判断时要考虑成分所在位置；“剂量决定毒性”。
+       没有配料表的商品（如电子产品），ingredients 列主要材质、部件或核心参数，按重要程度排列。
     3. 区分短期影响（几天到几周内可能的感受或反应）与长期影响（长期、经常使用/食用的潜在风险）。
     4. 公司信息：只写你有把握的事实（所属集团、国家、主营业务、是否有过公开的质量/安全事件）。
        不确定就写“暂无可靠信息”，绝不编造。你的知识有截止日期，必要时提醒用户核实最新信息。
@@ -455,6 +460,7 @@ struct AnalysisService {
     输出格式要求：只输出一个 JSON 对象，不要 markdown 代码块，不要任何解释文字。所有字段都必须出现，结构如下：
     {
       "category": "food | cosmetic | clothing | household | other",
+      "productType": "具体商品类型，如 智能手机",
       "productName": "识别或推断出的商品名称",
       "verdict": "一句话结论，20字以内",
       "summary": "总体分析，100~200字",
@@ -489,7 +495,8 @@ struct AnalysisService {
             "type": "object",
             "properties": [
                 "category": ["type": "string", "enum": ["food", "cosmetic", "clothing", "household", "other"],
-                             "description": "商品类别"],
+                             "description": "商品类别；电子产品、家电、玩具等前四类以外的商品填 other"],
+                "productType": ["type": "string", "description": "具体商品类型，如 酸奶 / 洗面奶 / 智能手机 / 儿童积木"],
                 "productName": ["type": "string", "description": "识别或推断出的商品名称"],
                 "verdict": ["type": "string", "description": "一句话结论，20字以内"],
                 "summary": ["type": "string", "description": "总体分析，100~200字"],
@@ -502,8 +509,8 @@ struct AnalysisService {
                     "items": [
                         "type": "object",
                         "properties": [
-                            "name": ["type": "string"],
-                            "function": ["type": "string", "description": "作用，如 防腐剂/甜味剂/保湿剂/面料主成分"],
+                            "name": ["type": "string", "description": "成分名；非配料类商品写材质、部件或参数名"],
+                            "function": ["type": "string", "description": "作用，如 防腐剂/甜味剂/面料主成分；电子产品写用途或参数值"],
                             "risk": ["type": "string", "enum": ["safe", "low", "medium", "high", "unknown"]],
                             "note": ["type": "string", "description": "简短说明，30字以内"]
                         ],
@@ -534,7 +541,7 @@ struct AnalysisService {
                 "personalAdvice": ["type": ["string", "null"], "description": "针对用户本人的建议；没有个人情况时为 null"]
             ],
             "required": [
-                "category", "productName", "verdict", "summary", "primaryScore", "primaryScoreReason",
+                "category", "productType", "productName", "verdict", "summary", "primaryScore", "primaryScoreReason",
                 "valueScore", "valueScoreReason", "ingredients", "shortTermEffects", "longTermEffects",
                 "suitableFor", "avoidFor", "company", "alternatives", "confidence"
             ]
