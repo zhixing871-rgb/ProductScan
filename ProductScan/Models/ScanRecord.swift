@@ -1,0 +1,50 @@
+import Foundation
+import SwiftData
+
+/// 本地保存的一次扫描记录（SwiftData）
+@Model
+final class ScanRecord {
+    var id: UUID
+    var createdAt: Date
+    var categoryRaw: String
+    var productName: String
+    var price: Double?
+    var currency: String
+    var ocrText: String
+    var primaryScore: Double
+    var valueScore: Double?
+    @Attribute(.externalStorage) var imageData: Data?
+    var resultData: Data
+    var modelName: String?              // 用哪个 AI 模型分析的
+    var sourceURL: String?              // 链接模式下的商品网址
+
+    init(category: ProductCategory,
+         productName: String,
+         price: Double?,
+         currency: String,
+         ocrText: String,
+         imageData: Data?,
+         result: AnalysisResult,
+         modelName: String? = nil,
+         sourceURL: String? = nil) {
+        self.id = UUID()
+        self.createdAt = .now
+        self.categoryRaw = category.rawValue
+        self.productName = productName
+        self.price = price
+        self.currency = currency
+        self.ocrText = ocrText
+        self.imageData = imageData
+        self.primaryScore = result.primaryScore
+        self.valueScore = result.valueScore
+        self.resultData = (try? JSONEncoder().encode(result)) ?? Data()
+        self.modelName = modelName
+        self.sourceURL = sourceURL
+    }
+
+    var category: ProductCategory { ProductCategory(rawValue: categoryRaw) ?? .food }
+
+    var result: AnalysisResult? {
+        try? JSONDecoder().decode(AnalysisResult.self, from: resultData)
+    }
+}
