@@ -48,7 +48,7 @@ struct ShareCardView: View {
             Divider()
             HStack {
                 Image(systemName: "text.viewfinder")
-                Text("成分扫描 · AI 分析仅供参考")
+                Text("是否值得 · AI 分析仅供参考")
                 Spacer()
                 Text(record.createdAt, format: .dateTime.year().month().day())
             }

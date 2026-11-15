@@ -21,7 +21,8 @@ struct ShoppingSection: View {
             Section {
                 content(kind)
             } header: {
-                Text(kind == .alternatives ? "更好的同类选择" : "网上价格参考")
+                SectionLabel(title: kind == .alternatives ? "更好的同类选择" : "网上价格参考",
+                             icon: kind == .alternatives ? "arrow.triangle.swap" : "tag", tint: Theme.gold)
             } footer: {
                 Text(Self.disclaimer)
             }

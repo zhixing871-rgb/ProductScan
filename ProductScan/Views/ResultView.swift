@@ -32,38 +32,33 @@ struct ResultView: View {
                         Label(reanalyzeError, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                 }
-                header(r)
+                hero(r)
                 allergenBanner
-                personalSection(r)
 
-                Section("评分") {
-                    ScoreCard(title: record.category.primaryScoreLabel,
-                              score: r.primaryScore,
-                              reason: r.primaryScoreReason)
-                    if record.price != nil {
-                        ScoreCard(title: "性价比", score: r.valueScore, reason: r.valueScoreReason ?? "")
-                    } else {
-                        Text("未填写价格，未进行性价比评分").foregroundStyle(.secondary).font(.callout)
-                    }
+                Section {
+                    Text(r.summary).font(.callout).lineSpacing(3)
+                } header: {
+                    SectionLabel(title: "总体分析", icon: "text.quote")
                 }
 
-                ShoppingSection(record: record)
+                personalSection(r)
+
 
                 if let facts = NutritionParser.parse(record.ocrText, spec: record.specText ?? "") {
                     NutritionSection(facts: facts, profile: profile)
                 }
 
-                Section("总体分析") {
-                    Text(r.summary).font(.callout)
-                }
-
                 followUpSection
+                ShoppingSection(record: record)
 
                 if !r.ingredients.isEmpty {
-                    Section("\(record.category.ingredientsLabel)（\(r.ingredients.count)）") {
+                    Section {
                         ForEach(Array(r.ingredients.enumerated()), id: \.offset) { _, item in
                             IngredientRow(item: item)
                         }
+                    } header: {
+                        SectionLabel(title: "\(record.category.ingredientsLabel)（\(r.ingredients.count)）",
+                                     icon: "list.bullet.rectangle.portrait", tint: .indigo)
                     }
                 }
 
@@ -73,12 +68,14 @@ struct ResultView: View {
                 bulletSection("慎用 / 不适合", r.avoidFor, icon: "exclamationmark.circle", tint: .red)
 
                 if let company = r.company {
-                    Section("品牌 / 公司") {
+                    Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(company.name).font(.headline)
                             Text(company.background).font(.callout)
                             Text(company.reputation).font(.callout).foregroundStyle(.secondary)
                         }
+                    } header: {
+                        SectionLabel(title: "品牌 / 公司", icon: "building.2", tint: .gray)
                     }
                 }
 
@@ -107,6 +104,9 @@ struct ResultView: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            .listSectionSpacing(14)
+            .scrollContentBackground(.hidden)
+            .background(Theme.pageBackground)
             .navigationTitle(record.productName.isEmpty ? r.productName : record.productName)
             .navigationBarTitleDisplayMode(.inline)
             .onAppear { profile = UserProfile.load() }
@@ -181,7 +181,10 @@ struct ResultView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     } icon: {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
+                        Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                     }
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
@@ -202,39 +205,85 @@ struct ResultView: View {
         }
     }
 
-    private func header(_ r: AnalysisResult) -> some View {
+    /// 顶部大卡片：商品 + 结论 + 两个评分环（深蓝底，呼应 App 图标）
+    private func hero(_ r: AnalysisResult) -> some View {
         Section {
-            HStack(alignment: .top, spacing: 12) {
-                if let data = record.imageData, let img = UIImage(data: data) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(r.productType.map { "\(record.category.title) · \($0)" } ?? record.category.title,
-                          systemImage: record.category.icon)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(r.productName).font(.headline)
-                    Text(r.verdict)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(ScoreCard.color(for: r.primaryScore))
-                    if let price = record.price {
-                        Text("价格：\(price, specifier: "%.2f") \(record.currency)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    if let data = record.imageData, let img = UIImage(data: data) {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 68, height: 68)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.15)))
                     }
-                    if let s = record.sourceURL, let url = URL(string: s) {
-                        Link(destination: url) {
-                            Label("查看商品页面", systemImage: "link")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Pill(text: r.productType.map { "\(record.category.shortTitle) · \($0)" } ?? record.category.title,
+                             icon: record.category.icon, tint: Theme.cyan)
+                        Text(r.productName).font(.headline).foregroundStyle(.white).lineLimit(2)
+                        if let price = record.price {
+                            Text("\(price, specifier: "%.2f") \(record.currency)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(Theme.gold)
                         }
-                        .font(.caption)
                     }
+                }
+
+                Text(r.verdict)
+                    .font(.title3.bold())
+                    .foregroundStyle(.white)
+
+                HStack(spacing: 0) {
+                    scoreColumn(record.category.primaryScoreLabel, r.primaryScore)
+                    Rectangle().fill(.white.opacity(0.12)).frame(width: 1, height: 90)
+                    scoreColumn("性价比", record.price != nil ? r.valueScore : nil,
+                                placeholder: "未填价格")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    reasonLine(record.category.primaryScoreLabel, r.primaryScoreReason)
+                    if record.price != nil, let reason = r.valueScoreReason, !reason.isEmpty {
+                        reasonLine("性价比", reason)
+                    }
+                }
+
+                if let s = record.sourceURL, let url = URL(string: s) {
+                    Link(destination: url) {
+                        Label("查看商品页面", systemImage: "arrow.up.right.square")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .tint(Theme.cyan)
                 }
             }
+            .padding(.vertical, 8)
+            .environment(\.colorScheme, .dark)
         }
+        .listRowBackground(
+            ZStack {
+                Theme.heroGradient
+                RadialGradient(colors: [Theme.cyan.opacity(0.25), .clear], center: .topTrailing,
+                               startRadius: 10, endRadius: 260)
+            }
+        )
+    }
+
+    private func scoreColumn(_ title: String, _ score: Double?, placeholder: String = "未评分") -> some View {
+        VStack(spacing: 8) {
+            ScoreRing(score: score, size: 80, lineWidth: 8)
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
+            Text(score.map(Theme.scoreWord) ?? placeholder)
+                .font(.caption2)
+                .foregroundStyle(score.map(Theme.scoreColor) ?? .white.opacity(0.5))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func reasonLine(_ title: String, _ text: String) -> some View {
+        (Text(title + "：").bold() + Text(text))
+            .font(.footnote)
+            .foregroundStyle(.white.opacity(0.75))
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// 本地检查：配料里命中用户设置的过敏原（不依赖 AI，实时按当前个人信息计算）
@@ -264,7 +313,7 @@ struct ResultView: View {
     @ViewBuilder
     private func personalSection(_ r: AnalysisResult) -> some View {
         if r.personalVerdict != nil || !r.personalWarnings.isEmpty || r.personalAdvice != nil {
-            Section("针对你") {
+            Section {
                 if let verdict = r.personalVerdict {
                     HStack {
                         Text("是否适合你")
@@ -287,6 +336,8 @@ struct ResultView: View {
                 if let advice = r.personalAdvice, !advice.isEmpty {
                     Text(advice).font(.callout)
                 }
+            } header: {
+                SectionLabel(title: "针对你", icon: "person.crop.circle.badge.checkmark", tint: Theme.green)
             }
         }
     }
@@ -302,7 +353,7 @@ struct ResultView: View {
     @ViewBuilder
     private func bulletSection(_ title: String, _ items: [String], icon: String, tint: Color) -> some View {
         if !items.isEmpty {
-            Section(title) {
+            Section {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, text in
                     Label {
                         Text(text).font(.callout)
@@ -310,6 +361,8 @@ struct ResultView: View {
                         Image(systemName: icon).foregroundStyle(tint)
                     }
                 }
+            } header: {
+                SectionLabel(title: title, icon: icon, tint: tint)
             }
         }
     }

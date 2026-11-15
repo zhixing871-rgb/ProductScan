@@ -15,7 +15,9 @@ targets:
         DEVELOPMENT_TEAM: 8T4ZML6C5S
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: 成分扫描
+        INFOPLIST_KEY_CFBundleDisplayName: 是否值得
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         INFOPLIST_KEY_NSCameraUsageDescription: 需要使用相机拍摄商品配料表或标签
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: 需要访问相册以选择配料表照片
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -39,6 +41,21 @@ targets:
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+  ProductScanUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: ProductScan
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zhixing.productscan.uitests
+        DEVELOPMENT_TEAM: 8T4ZML6C5S
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TEST_TARGET_NAME: ProductScan
 schemes:
   ProductScan:
     build:
@@ -48,3 +65,11 @@ schemes:
     test:
       targets:
         - ProductScanTests
+  Screenshots:
+    build:
+      targets:
+        ProductScan: all
+        ProductScanUITests: [test]
+    test:
+      targets:
+        - ProductScanUITests

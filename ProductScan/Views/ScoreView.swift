@@ -10,7 +10,7 @@ struct StarRating: View {
             ForEach(1...5, id: \.self) { i in
                 Image(systemName: symbol(for: Double(i)))
                     .font(.system(size: size))
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Theme.gold)
             }
         }
         .accessibilityLabel(Text(String(format: "%.1f 分，满分 5 分", score)))
@@ -50,12 +50,5 @@ struct ScoreCard: View {
         .padding(.vertical, 4)
     }
 
-    static func color(for score: Double) -> Color {
-        switch score {
-        case 4...: return .green
-        case 3..<4: return .teal
-        case 2..<3: return .orange
-        default: return .red
-        }
-    }
+    static func color(for score: Double) -> Color { Theme.scoreColor(score) }
 }

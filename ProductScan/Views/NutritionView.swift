@@ -25,7 +25,7 @@ struct NutritionSection: View {
                                 : item.nutrient.level(per100: item.value, isLiquid: facts.isLiquid))
             }
         } header: {
-            Text("营养成分（本机解析）")
+            SectionLabel(title: "营养成分（本机解析）", icon: "chart.bar.fill", tint: .orange)
         } footer: {
             Text(footerText)
         }

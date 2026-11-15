@@ -34,6 +34,22 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    HStack(spacing: 14) {
+                        Image("BrandIcon")
+                            .resizable()
+                            .frame(width: 60, height: 60)
+                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("是否值得").font(.title3.bold())
+                            Text("AI 帮你判断商品值不值得买").font(.caption).foregroundStyle(.secondary)
+                            Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section {
                     Picker("服务商", selection: $providerRaw) {
                         ForEach(AIProvider.allCases) { p in
                             Text(p.title).tag(p.rawValue)

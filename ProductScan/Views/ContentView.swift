@@ -12,6 +12,7 @@ struct ContentView: View {
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }
+        .tint(Theme.blue)
         .sheet(isPresented: $showPrivacy) {
             NavigationStack {
                 PrivacyView(isOnboarding: true) { showPrivacy = false }

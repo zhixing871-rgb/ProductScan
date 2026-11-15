@@ -30,9 +30,12 @@ struct HistoryView: View {
         NavigationStack {
             Group {
                 if records.isEmpty {
-                    ContentUnavailableView("还没有记录",
-                                           systemImage: "tray",
-                                           description: Text("在「扫描」页分析过的商品会保存在这里"))
+                    ContentUnavailableView {
+                    Label("还没有记录", systemImage: "tray")
+                } description: {
+                    Text("在「扫描」页分析过的商品会保存在这里")
+                }
+                .background(Theme.pageBackground)
                 } else {
                     list
                 }
@@ -80,6 +83,9 @@ struct HistoryView: View {
                 }
             }
         }
+        .listSectionSpacing(12)
+        .scrollContentBackground(.hidden)
+        .background(Theme.pageBackground)
         .environment(\.editMode, .constant(isSelecting ? .active : .inactive))
         .searchable(text: $searchText, prompt: "搜索商品名、成分或结论")
         .toolbar {
@@ -123,7 +129,8 @@ struct HistoryView: View {
                 }
             }
         }
-        .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+        .listRowBackground(Color.clear)
     }
 
     private func chip(_ title: String, systemImage: String? = nil, selected: Bool,
@@ -135,8 +142,10 @@ struct HistoryView: View {
             }
             .font(.subheadline)
             .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(selected ? Color.accentColor.opacity(0.18) : Color(.tertiarySystemFill), in: Capsule())
-            .foregroundStyle(selected ? Color.accentColor : .primary)
+            .background {
+                Capsule().fill(selected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+            }
+            .foregroundStyle(selected ? .white : .primary)
         }
         .buttonStyle(.plain)
     }
@@ -153,41 +162,51 @@ private struct HistoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if let data = record.imageData, let img = UIImage(data: data) {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                Image(systemName: record.category.icon)
-                    .frame(width: 48, height: 48)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            Group {
+                if let data = record.imageData, let img = UIImage(data: data) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: record.category.icon)
+                        .font(.title3)
+                        .foregroundStyle(Theme.blue)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.blue.opacity(0.1))
+                }
             }
-            VStack(alignment: .leading, spacing: 3) {
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     if record.isFavorite {
-                        Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
+                        Image(systemName: "star.fill").font(.caption).foregroundStyle(Theme.gold)
                     }
-                    Text(record.productName.isEmpty ? "未命名商品" : record.productName)
+                    Text(record.productName.isEmpty ? (record.result?.productName ?? "未命名商品") : record.productName)
                         .font(.headline)
                         .lineLimit(1)
                 }
+                if let verdict = record.result?.verdict {
+                    Text(verdict)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 6) {
-                    Text(record.category.primaryScoreLabel).font(.caption).foregroundStyle(.secondary)
-                    StarRating(score: record.primaryScore, size: 11)
-                }
-                if let v = record.valueScore {
-                    HStack(spacing: 6) {
-                        Text("性价比").font(.caption).foregroundStyle(.secondary)
-                        StarRating(score: v, size: 11)
+                    Text(record.category.shortTitle)
+                    if let v = record.valueScore {
+                        Text("性价比 \(String(format: "%.1f", v))")
+                            .foregroundStyle(Theme.scoreColor(v))
                     }
+                    Text(record.createdAt, format: .dateTime.month().day())
                 }
-            }
-            Spacer()
-            Text(record.createdAt, format: .dateTime.month().day())
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 4)
+            ScoreBadge(score: record.primaryScore)
         }
+        .padding(.vertical, 4)
     }
 }

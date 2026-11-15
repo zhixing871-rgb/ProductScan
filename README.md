@@ -1,4 +1,4 @@
-	# 成分扫描 ProductScan（iOS）
+# 是否值得 ProductScan（iOS）
 
 拍照 → 本地文字识别 → AI 成分分析 → 给出健康度/安全度/品质与性价比两项 5 分制评分。
 

@@ -10,6 +10,7 @@ struct ScanView: View {
     @State private var showCamera = false
     @State private var showQRCamera = false
     @State private var presentedRecord: ScanRecord?
+    @State private var showDetails = false
     @AppStorage("currency") private var currency = SettingsView.defaultCurrency
     @FocusState private var focused: Bool
     @State private var profileSummary: String?
@@ -18,67 +19,48 @@ struct ScanView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Picker("识别方式", selection: $vm.mode) {
-                        ForEach(InputMode.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                }
+            ScrollView {
+                VStack(spacing: 16) {
+                    hero
+                    modePicker
 
-                if vm.mode == .photo {
-                    photoSection
-                } else {
-                    linkSection
-                }
-
-                if vm.mode == .photo || !vm.ocrText.isEmpty {
-                    textSection
-                }
-
-                Section("商品信息（选填）") {
-                    TextField("商品名称 / 品牌", text: $vm.productName)
-                        .focused($focused)
-                    HStack {
-                        TextField(vm.mode == .link ? "价格（留空则从网页读取）" : "价格", text: $vm.priceText)
-                            .keyboardType(.decimalPad)
-                            .focused($focused)
-                        Text(vm.pageCurrency ?? currency).foregroundStyle(.secondary)
-                    }
-                    TextField("规格 / 净含量，如 500g、50ml、1件", text: $vm.specText)
-                        .focused($focused)
-                }
-
-                if let error = vm.errorMessage {
-                    Section {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    if vm.isAnalyzing {
-                        AnalysisProgressView(stage: vm.stage, startedAt: vm.analysisStartedAt) {
-                            vm.cancelAnalysis()
-                        }
+                    if vm.mode == .photo {
+                        photoCard
                     } else {
-                        Button {
-                            focused = false
-                            startAnalysis()
-                        } label: {
-                            Label("开始分析", systemImage: "sparkles")
-                                .frame(maxWidth: .infinity)
-                                .font(.headline)
-                        }
-                        .disabled(!vm.canAnalyze)
+                        linkCard
                     }
-                } footer: {
+
+                    if vm.mode == .photo ? (!vm.photos.isEmpty || !vm.ocrText.isEmpty || vm.isRecognizing) : !vm.ocrText.isEmpty {
+                        textCard
+                    }
+
+                    infoCard
+
+                    if let error = vm.errorMessage {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                            .card()
+                    }
+
                     if let summary = profileSummary {
-                        Label("将结合你的情况分析：\(summary)", systemImage: "person.crop.circle")
+                        Label("将结合你的情况分析：\(summary)", systemImage: "person.crop.circle.badge.checkmark")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+                .animation(.snappy, value: vm.mode)
+                .animation(.snappy, value: vm.photos.count)
             }
-            .navigationTitle("成分扫描")
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.pageBackground)
+            .safeAreaInset(edge: .bottom) { bottomBar }
+            .navigationTitle("是否值得")
+            .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 let p = UserProfile.load()
                 profileSummary = p.isActive ? p.summary : nil
@@ -138,28 +120,84 @@ struct ScanView: View {
         }
     }
 
+    // MARK: 顶部
+
+    private var hero: some View {
+        HStack(spacing: 14) {
+            Image("BrandIcon")
+                .resizable()
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .shadow(color: Theme.blue.opacity(0.4), radius: 8, y: 4)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("这东西值得买吗？")
+                    .font(.title2.bold())
+                Text("拍一拍或贴个链接，AI 帮你看成分、品质和价格")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 8)
+    }
+
+    /// 两个大按钮切换识别方式
+    private var modePicker: some View {
+        HStack(spacing: 12) {
+            modeTile(.photo, icon: "camera.viewfinder", subtitle: "配料表、标签、铭牌")
+            modeTile(.link, icon: "link", subtitle: "网购链接、口令、二维码")
+        }
+    }
+
+    private func modeTile(_ mode: InputMode, icon: String, subtitle: String) -> some View {
+        let selected = vm.mode == mode
+        return Button {
+            vm.mode = mode
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundStyle(selected ? .white : Theme.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.title).font(.headline)
+                    Text(subtitle).font(.caption2).opacity(0.8)
+                }
+                .foregroundStyle(selected ? .white : .primary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)))
+            }
+            .shadow(color: selected ? Theme.blue.opacity(0.3) : .black.opacity(0.04), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
     // MARK: 拍照模式
 
-    private var photoSection: some View {
-        Section {
+    private var photoCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CardTitle(title: "拍商品", icon: "camera.fill",
+                      trailing: vm.photos.isEmpty ? "最多 \(ScanViewModel.maxPhotos) 张" : "\(vm.photos.count)/\(ScanViewModel.maxPhotos)")
             imageArea
-            HStack {
+            HStack(spacing: 10) {
                 Button {
                     showCamera = true
                 } label: {
                     Label(vm.photos.isEmpty ? "拍照" : "再拍一张", systemImage: "camera")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(SoftButtonStyle())
                 .disabled(!cameraAvailable || !vm.canAddPhoto)
 
                 PhotosPicker(selection: $photoItems,
                              maxSelectionCount: max(1, ScanViewModel.maxPhotos - vm.photos.count),
                              matching: .images) {
                     Label("相册", systemImage: "photo.on.rectangle")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(SoftButtonStyle())
                 .disabled(!vm.canAddPhoto)
             }
             if let link = vm.detectedLink {
@@ -169,118 +207,14 @@ struct ScanView: View {
                     vm.webTarget = WebTarget(url: link)
                 } label: {
                     Label("照片里有二维码链接，打开网页抓取", systemImage: "qrcode.viewfinder")
+                        .font(.subheadline)
                 }
             }
-        } header: {
-            Text("配料表 / 成分标签")
-        } footer: {
-            Text("任何商品都可以拍，AI 会自动识别类别。最多 \(ScanViewModel.maxPhotos) 张：建议拍商品正面，再拍配料表、营养成分表、洗标或参数铭牌。")
+            Text("任何商品都可以拍，AI 会自动识别类别。建议先拍正面，再拍配料表、营养成分表、洗标或参数铭牌。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-    }
-
-    // MARK: 链接模式
-
-    private var linkSection: some View {
-        Section {
-            TextField("粘贴商品链接、分享口令，或直接输入商品介绍文字", text: $vm.linkText, axis: .vertical)
-                .lineLimit(3...6)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($focused)
-
-            HStack {
-                Button {
-                    if let s = UIPasteboard.general.string { vm.linkText = s }
-                } label: {
-                    Label("粘贴", systemImage: "doc.on.clipboard").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    showQRCamera = true
-                } label: {
-                    Label("扫码", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!cameraAvailable)
-
-                PhotosPicker(selection: $qrPhotoItem, matching: .images) {
-                    Label("码图", systemImage: "photo").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-            .labelStyle(.titleAndIcon)
-            .font(.subheadline)
-
-            Button {
-                focused = false
-                switch vm.submitLink() {
-                case .useAsText: startAnalysis()
-                case .openedWeb, .nothing: break
-                }
-            } label: {
-                Label(LinkExtractor.firstURL(in: vm.linkText) != nil || vm.linkText.isEmpty
-                      ? "打开链接并抓取" : "按文字分析",
-                      systemImage: "arrow.down.doc")
-                    .frame(maxWidth: .infinity)
-                    .font(.headline)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(vm.linkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vm.isAnalyzing)
-
-            if let url = vm.sourceURL {
-                HStack(spacing: 10) {
-                    if let img = vm.image {
-                        Image(uiImage: img)
-                            .resizable().scaledToFill()
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("已抓取页面").font(.caption.bold())
-                        Text(url).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-            }
-        } header: {
-            Text("商品链接 / 二维码 / 文字")
-        } footer: {
-            Text("支持淘宝、京东、拼多多、亚马逊等网购链接或分享口令。App 会在内置浏览器里打开页面，抓取标题、价格、商品描述，并识别详情图里的配料表文字。")
-        }
-    }
-
-    // MARK: 共用
-
-    private var textSection: some View {
-        Section {
-            if vm.isRecognizing {
-                HStack { ProgressView(); Text("正在识别…").foregroundStyle(.secondary) }
-            }
-            TextEditor(text: $vm.ocrText)
-                .frame(minHeight: 120, maxHeight: vm.mode == .link ? 220 : .infinity)
-                .font(.callout)
-                .focused($focused)
-                .overlay(alignment: .topLeading) {
-                    if vm.ocrText.isEmpty {
-                        Text("识别结果会显示在这里，可手动修改或直接粘贴配料表")
-                            .foregroundStyle(.tertiary)
-                            .font(.callout)
-                            .padding(.top, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
-        } header: {
-            Text(vm.mode == .link ? "抓取到的内容（可编辑）" : "识别出的文字（可编辑）")
-        }
-    }
-
-    private func startAnalysis() {
-        vm.startAnalysis(context: context)
-    }
-
-    private func loadImage(_ item: PhotosPickerItem) async -> UIImage? {
-        guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
-        return UIImage(data: data)
+        .card()
     }
 
     @ViewBuilder
@@ -293,7 +227,7 @@ struct ScanView: View {
                             .resizable()
                             .scaledToFill()
                             .frame(width: 110, height: 140)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(alignment: .topTrailing) {
                                 Button {
                                     vm.removePhoto(photo.id)
@@ -317,19 +251,207 @@ struct ScanView: View {
                             }
                     }
                 }
-                .padding(.vertical, 4)
             }
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "text.viewfinder")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.secondary)
-                Text(cameraAvailable ? "拍照或从相册选择（可多张）" : "模拟器无相机，请从相册选择")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Button {
+                if cameraAvailable { showCamera = true }
+            } label: {
+                VStack(spacing: 10) {
+                    Image(systemName: "text.viewfinder")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(Theme.brandGradient)
+                    Text(cameraAvailable ? "点这里拍照，或从相册选择" : "请从相册选择照片")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 150)
+                .background(Theme.blue.opacity(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Theme.blue.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                }
             }
-            .frame(maxWidth: .infinity, minHeight: 140)
+            .buttonStyle(.plain)
         }
+    }
+
+    // MARK: 链接模式
+
+    private var linkCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CardTitle(title: "商品链接 / 二维码 / 文字", icon: "link", tint: Theme.cyan)
+
+            TextField("粘贴商品链接、分享口令，或直接输入商品介绍文字", text: $vm.linkText, axis: .vertical)
+                .lineLimit(3...6)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($focused)
+                .fieldStyle()
+
+            HStack(spacing: 10) {
+                Button {
+                    if let s = UIPasteboard.general.string { vm.linkText = s }
+                } label: {
+                    Label("粘贴", systemImage: "doc.on.clipboard")
+                }
+                Button {
+                    showQRCamera = true
+                } label: {
+                    Label("扫码", systemImage: "qrcode.viewfinder")
+                }
+                .disabled(!cameraAvailable)
+                PhotosPicker(selection: $qrPhotoItem, matching: .images) {
+                    Label("码图", systemImage: "photo")
+                }
+            }
+            .buttonStyle(SoftButtonStyle(tint: Theme.cyan))
+
+            if let url = vm.sourceURL {
+                HStack(spacing: 10) {
+                    if let img = vm.image {
+                        Image(uiImage: img)
+                            .resizable().scaledToFill()
+                            .frame(width: 48, height: 48)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("已抓取页面", systemImage: "checkmark.circle.fill")
+                            .font(.caption.bold()).foregroundStyle(Theme.green)
+                        Text(url).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+
+            Text("支持淘宝、京东、拼多多、亚马逊等链接或分享口令。App 会在内置浏览器里打开页面，抓取标题、价格、描述，并识别详情图里的配料表。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .card()
+    }
+
+    // MARK: 识别文字
+
+    private var textCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            CardTitle(title: vm.mode == .link ? "抓取到的内容" : "识别出的文字", icon: "text.alignleft",
+                      tint: .indigo, trailing: "可编辑")
+            if vm.isRecognizing {
+                HStack(spacing: 8) { ProgressView(); Text("正在识别文字…").font(.callout).foregroundStyle(.secondary) }
+            }
+            TextEditor(text: $vm.ocrText)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 110, maxHeight: 220)
+                .font(.callout)
+                .focused($focused)
+                .padding(8)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .topLeading) {
+                    if vm.ocrText.isEmpty {
+                        Text("识别结果会显示在这里，也可以直接粘贴配料表")
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                            .padding(.horizontal, 13).padding(.vertical, 16)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+        .card()
+    }
+
+    // MARK: 商品信息
+
+    private var infoCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.snappy) { showDetails.toggle() }
+            } label: {
+                HStack {
+                    CardTitle(title: "商品信息", icon: "tag.fill", tint: Theme.gold,
+                              trailing: hasDetails ? nil : "选填，填价格才评性价比")
+                    Image(systemName: "chevron.down")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(detailsVisible ? 180 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if detailsVisible {
+                TextField("商品名称 / 品牌", text: $vm.productName)
+                    .focused($focused)
+                    .fieldStyle()
+                HStack(spacing: 8) {
+                    TextField(vm.mode == .link ? "价格（留空则从网页读取）" : "价格", text: $vm.priceText)
+                        .keyboardType(.decimalPad)
+                        .focused($focused)
+                    Text(vm.pageCurrency ?? currency).foregroundStyle(.secondary)
+                }
+                .fieldStyle()
+                TextField("规格 / 净含量，如 500g、50ml、1件", text: $vm.specText)
+                    .focused($focused)
+                    .fieldStyle()
+            }
+        }
+        .card()
+    }
+
+    private var hasDetails: Bool {
+        !vm.productName.isEmpty || !vm.priceText.isEmpty || !vm.specText.isEmpty
+    }
+
+    private var detailsVisible: Bool { showDetails || hasDetails }
+
+    // MARK: 底部按钮
+
+    @ViewBuilder
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            if vm.isAnalyzing {
+                AnalysisProgressView(stage: vm.stage, startedAt: vm.analysisStartedAt) {
+                    vm.cancelAnalysis()
+                }
+                .card()
+            } else if vm.mode == .link && vm.sourceURL == nil && !vm.linkText.trimmed.isEmpty {
+                Button {
+                    focused = false
+                    switch vm.submitLink() {
+                    case .useAsText: startAnalysis()
+                    case .openedWeb, .nothing: break
+                    }
+                } label: {
+                    Label(LinkExtractor.firstURL(in: vm.linkText) != nil ? "打开链接并抓取分析" : "按文字分析",
+                          systemImage: "arrow.down.doc")
+                }
+                .buttonStyle(GradientButtonStyle())
+            } else {
+                Button {
+                    focused = false
+                    startAnalysis()
+                } label: {
+                    Label("开始分析", systemImage: "sparkles")
+                }
+                .buttonStyle(GradientButtonStyle())
+                .disabled(!vm.canAnalyze)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background {
+            LinearGradient(colors: [Color(.systemGroupedBackground).opacity(0), Color(.systemGroupedBackground)],
+                           startPoint: .top, endPoint: .center)
+                .ignoresSafeArea()
+        }
+    }
+
+    private func startAnalysis() {
+        vm.startAnalysis(context: context)
+    }
+
+    private func loadImage(_ item: PhotosPickerItem) async -> UIImage? {
+        guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
+        return UIImage(data: data)
     }
 }
 
@@ -342,7 +464,7 @@ struct AnalysisProgressView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                ProgressView()
+                ProgressView().tint(Theme.blue)
                 Text(stage?.title ?? "准备中…").font(.headline)
                 Spacer()
                 if let startedAt {
@@ -354,16 +476,18 @@ struct AnalysisProgressView: View {
                 }
             }
             StepDots(stage: stage)
-            Text("通常需要 15~60 秒，取决于模型和内容长度。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button(role: .destructive, action: onCancel) {
-                Label("取消分析", systemImage: "xmark.circle")
-                    .frame(maxWidth: .infinity)
+            HStack {
+                Text("通常需要 15~60 秒")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(role: .destructive, action: onCancel) {
+                    Label("取消", systemImage: "xmark.circle")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.bordered)
         }
-        .padding(.vertical, 4)
     }
 }
 
@@ -383,10 +507,10 @@ private struct StepDots: View {
             ForEach(Array(["整理内容", "AI 分析", "解析结果"].enumerated()), id: \.offset) { i, title in
                 HStack(spacing: 4) {
                     Image(systemName: i < index ? "checkmark.circle.fill" : (i == index ? "circle.dotted" : "circle"))
-                        .foregroundStyle(i <= index ? Color.accentColor : .secondary)
+                        .foregroundStyle(i <= index ? Theme.blue : .secondary)
                     Text(title).font(.caption).foregroundStyle(i <= index ? .primary : .secondary)
                 }
-                if i < 2 { Rectangle().fill(.quaternary).frame(height: 1) }
+                if i < 2 { Capsule().fill(i < index ? Theme.blue.opacity(0.6) : Color.secondary.opacity(0.2)).frame(height: 2) }
             }
         }
     }
