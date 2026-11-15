@@ -7,6 +7,8 @@ struct ResultView: View {
         if let r = record.result {
             List {
                 header(r)
+                allergenBanner
+                personalSection(r)
 
                 Section("评分") {
                     ScoreCard(title: record.category.primaryScoreLabel,
@@ -106,6 +108,68 @@ struct ResultView: View {
                 }
             }
         }
+    }
+
+    /// 本地检查：配料里命中用户设置的过敏原（不依赖 AI，实时按当前个人信息计算）
+    @ViewBuilder
+    private var allergenBanner: some View {
+        let hits = AllergenChecker.check(record.ocrText + " " + record.productName, profile: UserProfile.load())
+        if !hits.isEmpty {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("可能含有你的过敏原", systemImage: "exclamationmark.octagon.fill")
+                        .font(.headline)
+                        .foregroundStyle(.red)
+                    ForEach(hits, id: \.self) { hit in
+                        Text("\(hit.name)：\(hit.words.joined(separator: "、"))")
+                            .font(.callout)
+                    }
+                    Text("由本机按关键词检查，可能有误判，请以包装上的过敏原信息为准。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.red.opacity(0.08))
+        }
+    }
+
+    @ViewBuilder
+    private func personalSection(_ r: AnalysisResult) -> some View {
+        if r.personalVerdict != nil || !r.personalWarnings.isEmpty || r.personalAdvice != nil {
+            Section("针对你") {
+                if let verdict = r.personalVerdict {
+                    HStack {
+                        Text("是否适合你")
+                        Spacer()
+                        Text(verdict)
+                            .font(.subheadline.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Self.verdictColor(verdict).opacity(0.15), in: Capsule())
+                            .foregroundStyle(Self.verdictColor(verdict))
+                    }
+                }
+                ForEach(Array(r.personalWarnings.enumerated()), id: \.offset) { _, text in
+                    Label {
+                        Text(text).font(.callout)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
+                if let advice = r.personalAdvice, !advice.isEmpty {
+                    Text(advice).font(.callout)
+                }
+            }
+        }
+    }
+
+    static func verdictColor(_ v: String) -> Color {
+        if v.contains("避免") { return .red }
+        if v.contains("慎用") { return .orange }
+        if v.contains("适量") { return .teal }
+        if v.contains("适合") { return .green }
+        return .gray
     }
 
     @ViewBuilder

@@ -34,6 +34,7 @@ struct AnalysisService {
         var ocrText: String
         var imageJPEG: Data?
         var sourceURL: String? = nil        // 非空表示内容来自网页抓取
+        var profile: UserProfile? = nil     // 用户个人信息（开启时）
     }
 
     func analyze(_ input: Input) async throws -> AnalysisResult {
@@ -70,6 +71,11 @@ struct AnalysisService {
         }
 
         result.primaryScore = Self.clamp(result.primaryScore)
+        if input.profile?.isActive != true {
+            result.personalVerdict = nil
+            result.personalWarnings = []
+            result.personalAdvice = nil
+        }
         if let p = result.detectedPrice, p <= 0 { result.detectedPrice = nil }
         if input.price != nil || input.sourceURL == nil { result.detectedPrice = nil }
         if input.price == nil && result.detectedPrice == nil {
@@ -218,7 +224,7 @@ struct AnalysisService {
 
         // 嵌套字段有时被模型写成了 JSON 字符串
         for key in ["ingredients", "company", "shortTermEffects", "longTermEffects",
-                    "suitableFor", "avoidFor", "alternatives"] {
+                    "suitableFor", "avoidFor", "alternatives", "personalWarnings"] {
             if let s = dict[key] as? String,
                let data = s.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: data) {
@@ -244,7 +250,7 @@ struct AnalysisService {
         }
 
         // 字符串数组里混了对象 / null
-        for key in ["shortTermEffects", "longTermEffects", "suitableFor", "avoidFor", "alternatives"] {
+        for key in ["shortTermEffects", "longTermEffects", "suitableFor", "avoidFor", "alternatives", "personalWarnings"] {
             if let list = dict[key] as? [Any] {
                 dict[key] = list.compactMap { item -> String? in
                     if let s = item as? String { return s }
@@ -339,6 +345,25 @@ struct AnalysisService {
             ocrBlock = "（用户没有拍照，只提供了商品名称，请基于你对该商品的了解分析，并把 confidence 设为“低”或“中”）"
         }
 
+        var profileBlock = ""
+        if let profile = input.profile, profile.isActive {
+            let hits = AllergenChecker.check(input.ocrText + " " + input.productName, profile: profile)
+            let hitLine = hits.isEmpty ? "" : "\n本地关键词检查发现可能含有用户的过敏原：" +
+                hits.map { "\($0.name)（\($0.words.joined(separator: "、"))）" }.joined(separator: "；") +
+                "。请核实，属实就放在 personalWarnings 第一条。"
+            profileBlock = """
+
+            用户本人的情况（请据此做个性化判断）：
+            \(profile.promptText)\(hitLine)
+            个性化要求：
+            1. personalVerdict 只能填：适合 / 适量 / 慎用 / 避免，表示这个商品对该用户本人是否合适。
+            2. personalWarnings：逐条写出与用户过敏、忌口、健康状况、孕期哺乳、肤质等冲突的具体成分和原因；命中过敏原或忌口必须写在最前面；没有冲突时为空数组。
+            3. personalAdvice：结合用户情况给出 60~120 字的具体建议，如每次适合吃多少、多久吃一次、怎么搭配、换成什么更合适；减脂/控糖/控盐人群要结合热量、糖、钠的含量来说。
+            4. primaryScore 仍按通用标准评分，不要因个人情况改动；个人适合程度只体现在 personal 相关字段。
+
+            """
+        }
+
         let ending = settings.provider == .claude
             ? "请调用 report_analysis 工具输出结果。"
             : "请严格按约定的 JSON 格式输出结果，只输出 JSON。"
@@ -355,6 +380,7 @@ struct AnalysisService {
         \(ocrBlock)
         \"\"\"
 
+        \(profileBlock)
         本地知识库命中的参考条目（作为参考，仍需你结合含量和配料位置判断\(input.category == nil ? "；方括号里是条目所属类别，只采用与你判断出的类别一致的条目" : "")）：
         \(kbBlock)
 
@@ -405,9 +431,12 @@ struct AnalysisService {
       "alternatives": ["更健康/更值的替代选择（类型即可）"],
       "confidence": "高 | 中 | 低",
       "detectedPrice": 59.9,
-      "detectedCurrency": "CNY"
+      "detectedCurrency": "CNY",
+      "personalVerdict": "适合 | 适量 | 慎用 | 避免",
+      "personalWarnings": ["针对用户本人的警示"],
+      "personalAdvice": "针对用户本人的建议"
     }
-    primaryScore、valueScore 必须是 1~5 的数字；未提供价格时 valueScore 和 valueScoreReason 为 null；无法确定公司时 company 为 null；detectedPrice 只在用户消息要求从网页找价格时填写，否则为 null。
+    primaryScore、valueScore 必须是 1~5 的数字；未提供价格时 valueScore 和 valueScoreReason 为 null；无法确定公司时 company 为 null；detectedPrice 只在用户消息要求从网页找价格时填写，否则为 null；用户消息里没有提供个人情况时，personalVerdict、personalAdvice 为 null，personalWarnings 为空数组。
     """
 
     static var reportTool: [String: Any] {
@@ -455,7 +484,12 @@ struct AnalysisService {
                 "alternatives": ["type": "array", "items": ["type": "string"], "description": "更健康/更值的替代选择建议（类型即可，不必指定品牌）"],
                 "confidence": ["type": "string", "enum": ["高", "中", "低"]],
                 "detectedPrice": ["type": ["number", "null"], "description": "从网页内容找到的售价，仅在用户要求时填写，否则 null"],
-                "detectedCurrency": ["type": ["string", "null"], "description": "detectedPrice 的货币代码，如 CNY"]
+                "detectedCurrency": ["type": ["string", "null"], "description": "detectedPrice 的货币代码，如 CNY"],
+                "personalVerdict": ["type": ["string", "null"], "enum": ["适合", "适量", "慎用", "避免", NSNull()],
+                                    "description": "对用户本人是否合适；没有提供个人情况时为 null"],
+                "personalWarnings": ["type": "array", "items": ["type": "string"],
+                                     "description": "与用户过敏、忌口、健康状况冲突的成分和原因；没有个人情况或无冲突时为空数组"],
+                "personalAdvice": ["type": ["string", "null"], "description": "针对用户本人的建议；没有个人情况时为 null"]
             ],
             "required": [
                 "category", "productName", "verdict", "summary", "primaryScore", "primaryScoreReason",

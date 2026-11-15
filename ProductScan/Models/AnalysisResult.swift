@@ -20,6 +20,9 @@ struct AnalysisResult: Codable, Hashable {
     var confidence: String              // 高/中/低（识别文字不全时会降低）
     var detectedPrice: Double?          // 从网页内容里找到的售价（链接模式）
     var detectedCurrency: String?
+    var personalVerdict: String?        // 是否适合用户本人：适合 / 适量 / 慎用 / 避免
+    var personalWarnings: [String] = [] // 针对用户的警示（过敏、忌口、健康状况冲突）
+    var personalAdvice: String?         // 针对用户的建议
 }
 
 /// 宽松解码：不同模型返回的字段可能缺失、类型不一致（数字写成字符串、数组为空值等），
@@ -28,7 +31,8 @@ extension AnalysisResult {
     private enum CodingKeys: String, CodingKey {
         case category, productName, verdict, summary, primaryScore, primaryScoreReason,
              valueScore, valueScoreReason, ingredients, shortTermEffects, longTermEffects,
-             suitableFor, avoidFor, company, alternatives, confidence, detectedPrice, detectedCurrency
+             suitableFor, avoidFor, company, alternatives, confidence, detectedPrice, detectedCurrency,
+             personalVerdict, personalWarnings, personalAdvice
     }
 
     init(from decoder: Decoder) throws {
@@ -51,6 +55,9 @@ extension AnalysisResult {
         confidence = c.looseString(.confidence) ?? "中"
         detectedPrice = c.looseDouble(.detectedPrice)
         detectedCurrency = c.looseString(.detectedCurrency)
+        personalVerdict = c.looseString(.personalVerdict)
+        personalWarnings = c.looseStrings(.personalWarnings)
+        personalAdvice = c.looseString(.personalAdvice)
     }
 }
 

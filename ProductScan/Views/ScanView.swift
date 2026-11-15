@@ -12,6 +12,7 @@ struct ScanView: View {
     @State private var presentedRecord: ScanRecord?
     @AppStorage("currency") private var currency = SettingsView.defaultCurrency
     @FocusState private var focused: Bool
+    @State private var profileSummary: String?
 
     private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 
@@ -89,9 +90,17 @@ struct ScanView: View {
                         .font(.headline)
                     }
                     .disabled(!vm.canAnalyze)
+                } footer: {
+                    if let summary = profileSummary {
+                        Label("将结合你的情况分析：\(summary)", systemImage: "person.crop.circle")
+                    }
                 }
             }
             .navigationTitle("成分扫描")
+            .onAppear {
+                let p = UserProfile.load()
+                profileSummary = p.isActive ? p.summary : nil
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("清空") { vm.reset(); photoItem = nil; qrPhotoItem = nil }

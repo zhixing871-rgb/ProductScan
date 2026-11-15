@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var modelChoice = ""
     @State private var baseURL = ""
     @State private var saved = false
+    @State private var profileSummary = ""
 
     private var provider: AIProvider { AIProvider(rawValue: providerRaw) ?? .claude }
 
@@ -88,6 +89,24 @@ struct SettingsView: View {
                     Text("开启后，AI 能直接看照片判断商品是什么、读取配料表，比只用文字更准，但照片会上传到所选服务商。DeepSeek 和千问的纯文字模型不支持图片。")
                 }
 
+                Section {
+                    NavigationLink {
+                        ProfileView()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("我的身份")
+                            Text(profileSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                } header: {
+                    Text("个性化分析")
+                } footer: {
+                    Text("填写年龄、体重、健康目标、过敏和忌口，AI 会判断商品是否适合你。")
+                }
+
                 Section("价格货币") {
                     Picker("货币", selection: $currency) {
                         ForEach(Self.currencies, id: \.self) { Text($0).tag($0) }
@@ -102,7 +121,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
-            .onAppear(perform: loadProviderSettings)
+            .onAppear {
+                loadProviderSettings()
+                let p = UserProfile.load()
+                profileSummary = p.enabled ? p.summary : "已关闭"
+            }
             .onChange(of: providerRaw) { _, _ in loadProviderSettings() }
             .onChange(of: apiKey) { _, _ in saved = false }
             .onChange(of: modelChoice) { _, newValue in

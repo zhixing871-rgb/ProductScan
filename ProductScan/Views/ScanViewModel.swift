@@ -140,7 +140,8 @@ final class ScanViewModel {
             spec: specText.trimmingCharacters(in: .whitespaces),
             ocrText: ocrText.trimmingCharacters(in: .whitespacesAndNewlines),
             imageJPEG: image?.thumbnailJPEG(maxDimension: 1568, quality: 0.7),
-            sourceURL: sourceURL
+            sourceURL: sourceURL,
+            profile: UserProfile.load()
         )
 
         do {
