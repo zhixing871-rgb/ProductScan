@@ -23,6 +23,8 @@ final class ScanRecord {
     var inputTokens: Int?               // 本次分析用量
     var outputTokens: Int?
     var costText: String?               // 估算花费，如「约 $0.012」
+    var followUpData: Data?             // 追问对话（[FollowUpMessage] 的 JSON）
+    var shoppingData: Data?             // 联网购物助手结果（ShoppingResult 的 JSON）
 
     init(category: ProductCategory,
          productName: String,
@@ -53,6 +55,16 @@ final class ScanRecord {
     var usage: TokenUsage? {
         guard let i = inputTokens, let o = outputTokens else { return nil }
         return TokenUsage(inputTokens: i, outputTokens: o)
+    }
+
+    var followUps: [FollowUpMessage] {
+        get { followUpData.flatMap { try? JSONDecoder().decode([FollowUpMessage].self, from: $0) } ?? [] }
+        set { followUpData = newValue.isEmpty ? nil : try? JSONEncoder().encode(newValue) }
+    }
+
+    var shopping: ShoppingResult? {
+        get { shoppingData.flatMap { try? JSONDecoder().decode(ShoppingResult.self, from: $0) } }
+        set { shoppingData = newValue.flatMap { try? JSONEncoder().encode($0) } }
     }
 
     var result: AnalysisResult? {

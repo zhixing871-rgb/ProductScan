@@ -13,6 +13,7 @@ struct ResultView: View {
     @State private var newRecord: ScanRecord?
     @State private var shareImage: UIImage?
     @State private var profile = UserProfile.load()
+    @State private var followUp: FollowUpStart?
 
     var body: some View {
         if let r = record.result {
@@ -46,6 +47,8 @@ struct ResultView: View {
                     }
                 }
 
+                ShoppingSection(record: record)
+
                 if let facts = NutritionParser.parse(record.ocrText, spec: record.specText ?? "") {
                     NutritionSection(facts: facts, profile: profile)
                 }
@@ -53,6 +56,8 @@ struct ResultView: View {
                 Section("总体分析") {
                     Text(r.summary).font(.callout)
                 }
+
+                followUpSection
 
                 if !r.ingredients.isEmpty {
                     Section("\(record.category.ingredientsLabel)（\(r.ingredients.count)）") {
@@ -137,6 +142,7 @@ struct ResultView: View {
                 }
             }
             .navigationDestination(item: $newRecord) { ResultView(record: $0) }
+            .navigationDestination(item: $followUp) { FollowUpView(record: record, initialQuestion: $0.question) }
         } else {
             ContentUnavailableView("结果解析失败", systemImage: "exclamationmark.triangle")
         }
@@ -156,6 +162,42 @@ struct ResultView: View {
                 reanalyzeError = "已取消"
             } catch {
                 reanalyzeError = error.localizedDescription
+            }
+        }
+    }
+
+    /// 继续追问入口：点主按钮进入对话，点推荐问题直接发送
+    private var followUpSection: some View {
+        Section {
+            Button {
+                followUp = FollowUpStart(question: nil)
+            } label: {
+                HStack {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("继续追问").foregroundStyle(.primary)
+                            let count = record.followUps.filter { $0.role == .user }.count
+                            Text(count > 0 ? "已追问 \(count) 次，点开查看" : "例如：和同类产品有什么区别？值不值得买？")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+                }
+            }
+            if record.followUps.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(record.category.suggestedQuestions, id: \.self) { q in
+                            Button(q) { followUp = FollowUpStart(question: q) }
+                                .buttonStyle(.bordered)
+                                .buttonBorderShape(.capsule)
+                                .controlSize(.small)
+                        }
+                    }
+                }
             }
         }
     }

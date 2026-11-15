@@ -8,6 +8,15 @@ struct SettingsView: View {
     @AppStorage(AISettings.providerKey) private var providerRaw = AIProvider.claude.rawValue
     @AppStorage(AISettings.sendImageKey) private var sendImage = true
     @AppStorage("currency") private var currency = defaultCurrency
+    @AppStorage(ShoppingSettings.recommendKey) private var shopRecommend = false
+    @AppStorage(ShoppingSettings.priceCheckKey) private var shopPriceCheck = false
+
+    private var shoppingSummary: String {
+        var parts: [String] = []
+        if shopRecommend { parts.append("低分推荐替代品") }
+        if shopPriceCheck { parts.append("线下查价格") }
+        return parts.isEmpty ? "未开启" : "已开启：" + parts.joined(separator: "、")
+    }
 
     // 每个服务商各自保存，切换时加载
     @State private var apiKey = ""
@@ -126,6 +135,21 @@ struct SettingsView: View {
                     Text("个性化分析")
                 } footer: {
                     Text("填写年龄、体重、健康目标、过敏和忌口，AI 会判断商品是否适合你。")
+                }
+
+                Section {
+                    NavigationLink {
+                        ShoppingSettingsView()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("联网购物助手")
+                            Text(shoppingSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("低分网购商品推荐更好的同类选择、线下商品查网上价格。默认关闭，需手动开启。")
                 }
 
                 Section("价格货币") {

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum AnalysisError: LocalizedError {
     case missingAPIKey(AIProvider)
@@ -7,9 +8,23 @@ enum AnalysisError: LocalizedError {
     case http(Int, String)
     case truncated
     case badResponse(String)
+    case network(URLError)
 
     var errorDescription: String? {
         switch self {
+        case .network(let e):
+            switch e.code {
+            case .notConnectedToInternet:
+                return "手机没有联网，请检查 Wi-Fi 或蜂窝数据（以及「设置 → 蜂窝网络」里是否允许本 App 使用数据）"
+            case .timedOut:
+                return "AI 服务响应超时，请稍后重试，或在设置里换一个更快的模型"
+            case .networkConnectionLost:
+                return "网络连接中断了（已自动重试仍失败）。请确认网络稳定、分析过程中不要切到其他 App 或锁屏，然后点重试"
+            case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
+                return "连不上 AI 服务器，请检查网络；Claude/GPT 在部分地区需要能访问海外网络，也可以换用 DeepSeek 或千问"
+            default:
+                return "网络出错：\(e.localizedDescription)"
+            }
         case .missingAPIKey(let p): return "请先在「设置」里填写 \(p.shortTitle) 的 API Key"
         case .emptyInput: return "请拍照识别配料表，或至少填写商品名称"
         case .imageNotSupported(let model):
@@ -204,9 +219,147 @@ struct AnalysisService {
         throw AnalysisError.badResponse("模型没有返回内容")
     }
 
+    // MARK: - 追问（普通文字对话）
+
+    struct ChatReply {
+        var text: String
+        var usage: TokenUsage?
+    }
+
+    /// 基于已有分析结果继续追问。context 由 followUpContext 生成，history 以用户消息结尾。
+    func followUp(context: String, history: [FollowUpMessage]) async throws -> ChatReply {
+        guard !settings.apiKey.isEmpty else { throw AnalysisError.missingAPIKey(settings.provider) }
+        let turns = Self.mergedTurns(history.suffix(20))
+        guard turns.last?.role == "user" else { throw AnalysisError.emptyInput }
+        let system = Self.followUpPrompt + "\n\n" + context
+
+        let raw: String
+        let usage: TokenUsage?
+        switch settings.provider {
+        case .claude:
+            let body: [String: Any] = [
+                "model": settings.model,
+                "max_tokens": 8000,
+                "system": [["type": "text", "text": system, "cache_control": ["type": "ephemeral"]]],
+                "messages": turns.map { ["role": $0.role, "content": $0.text] }
+            ]
+            let json = try await post(path: "/messages", body: body, headers: [
+                "x-api-key": settings.apiKey,
+                "anthropic-version": "2023-06-01"
+            ])
+            if (json["stop_reason"] as? String) == "refusal" { throw AnalysisError.badResponse("模型拒绝回答这个问题") }
+            let blocks = json["content"] as? [[String: Any]] ?? []
+            raw = blocks.filter { ($0["type"] as? String) == "text" }.compactMap { $0["text"] as? String }.joined()
+            usage = TokenUsage(json: json)
+        case .openai, .deepseek, .qwen:
+            var body: [String: Any] = [
+                "model": settings.model,
+                "messages": [["role": "system", "content": system]] + turns.map { ["role": $0.role, "content": $0.text] }
+            ]
+            if settings.provider == .openai {
+                body["max_completion_tokens"] = 8000
+            } else {
+                body["max_tokens"] = 4096
+            }
+            let json = try await post(path: "/chat/completions", body: body, headers: [
+                "Authorization": "Bearer \(settings.apiKey)"
+            ])
+            let message = ((json["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any]) ?? [:]
+            if let s = message["content"] as? String {
+                raw = s
+            } else {
+                raw = (message["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
+            }
+            usage = TokenUsage(json: json)
+        }
+        let text = Self.cleanReply(raw)
+        guard !text.isEmpty else { throw AnalysisError.badResponse("模型没有返回内容") }
+        return ChatReply(text: text, usage: usage)
+    }
+
+    /// 合并连续的同角色消息（例如上一次发送失败后又发了一条），保证 user/assistant 交替
+    static func mergedTurns<S: Sequence>(_ messages: S) -> [(role: String, text: String)] where S.Element == FollowUpMessage {
+        var turns: [(role: String, text: String)] = []
+        for m in messages {
+            if turns.last?.role == m.role.rawValue {
+                turns[turns.count - 1].text += "\n\n" + m.text
+            } else {
+                turns.append((m.role.rawValue, m.text))
+            }
+        }
+        while turns.first?.role == "assistant" { turns.removeFirst() }
+        return turns
+    }
+
+    /// 去掉思考过程标签和首尾空白
+    static func cleanReply(_ text: String) -> String {
+        var t = text
+        if let r = t.range(of: "</think>") { t = String(t[r.upperBound...]) }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 把这条记录的商品信息和分析结论整理成追问时的背景资料
+    static func followUpContext(record: ScanRecord, profile: UserProfile?) -> String {
+        var lines: [String] = ["【商品信息】"]
+        let r = record.result
+        let name = record.productName.isEmpty ? (r?.productName ?? "未知") : record.productName
+        lines.append("商品名称：\(name)")
+        lines.append("类别：\(record.category.title)\(r?.productType.map { " · \($0)" } ?? "")")
+        if let p = record.price { lines.append("价格：\(String(format: "%.2f", p)) \(record.currency)") }
+        if let s = record.specText, !s.isEmpty { lines.append("规格：\(s)") }
+        if let u = record.sourceURL { lines.append("商品网页：\(u)") }
+
+        if let r {
+            lines.append("\n【你之前给出的分析报告】")
+            lines.append("结论：\(r.verdict)")
+            lines.append("总体分析：\(r.summary)")
+            lines.append("\(record.category.primaryScoreLabel)：\(r.primaryScore)/5，\(r.primaryScoreReason)")
+            if let v = r.valueScore { lines.append("性价比：\(v)/5，\(r.valueScoreReason ?? "")") }
+            if !r.ingredients.isEmpty {
+                lines.append("\(record.category.ingredientsLabel)：")
+                lines += r.ingredients.map { "- \($0.name)（\($0.function)，风险：\($0.risk.title)）\($0.note)" }
+            }
+            func list(_ title: String, _ items: [String]) {
+                if !items.isEmpty { lines.append("\(title)：\(items.joined(separator: "；"))") }
+            }
+            list("短期影响", r.shortTermEffects)
+            list("长期影响", r.longTermEffects)
+            list("适合人群", r.suitableFor)
+            list("慎用人群", r.avoidFor)
+            list("替代建议", r.alternatives)
+            if let c = r.company { lines.append("品牌/公司：\(c.name)。\(c.background) \(c.reputation)") }
+            if let pv = r.personalVerdict { lines.append("对用户本人：\(pv)。\(r.personalAdvice ?? "")") }
+            list("针对用户的警示", r.personalWarnings)
+        }
+
+        let ocr = record.ocrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ocr.isEmpty {
+            lines.append("\n【包装/网页原文（节选）】")
+            lines.append(String(ocr.prefix(3000)))
+        }
+        if let profile, profile.isActive {
+            lines.append("\n【用户本人的情况】")
+            lines.append(profile.promptText)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static let followUpPrompt = """
+    你是「成分扫描」App 内置的商品顾问。用户刚看完你对下面这个商品的分析报告，现在继续追问，\
+    例如和其他商品或替代方案（比如用手机代替）的区别、适合什么场景、怎么选、值不值得买、使用注意事项等。
+
+    回答要求：
+    1. 直接回答问题，紧扣这个商品的具体信息；需要比较时，用你掌握的通用知识，从功能、效果、使用场景、价格、优缺点几方面说清区别，最后给出明确建议。
+    2. 简体中文，通俗易懂，一般 150~400 字。可以用简短分点（以「1.」或「-」开头）和 **加粗**，不要用表格和 # 标题。
+    3. 不确定的信息要说明，不编造型号参数、价格和公司信息；你的知识有截止日期，必要时提醒用户核实。
+    4. 用户提供了个人情况时，结合其情况回答。
+    5. 涉及健康、医疗的内容只做科普，提醒以医生意见为准。
+    6. 与这个商品完全无关的问题，简短回应后把话题引回商品。
+    """
+
     // MARK: - 网络
 
-    private func post(path: String, body: [String: Any], headers: [String: String]) async throws -> [String: Any] {
+    func post(path: String, body: [String: Any], headers: [String: String]) async throws -> [String: Any] {
         var base = settings.baseURL
         while base.hasSuffix("/") { base.removeLast() }
         guard let url = URL(string: base + path) else {
@@ -219,7 +372,11 @@ struct AnalysisService {
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // 切到后台时多争取一点时间，避免请求被系统立即中断
+        let bgTask = await UIApplication.shared.beginBackgroundTask(withName: "AIRequest")
+        defer { Task { @MainActor in UIApplication.shared.endBackgroundTask(bgTask) } }
+
+        let (data, response) = try await Self.send(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 
@@ -232,6 +389,25 @@ struct AnalysisService {
             throw AnalysisError.http(status, message)
         }
         return json
+    }
+
+    /// 发送请求；连接被意外断开（常见于复用了已被服务器关闭的连接、网络切换）时自动重试 2 次
+    private static func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let retryable: Set<URLError.Code> = [.networkConnectionLost, .cannotConnectToHost,
+                                             .dnsLookupFailed, .secureConnectionFailed]
+        var attempt = 0
+        while true {
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch let error as URLError where error.code != .cancelled {
+                attempt += 1
+                if retryable.contains(error.code) && attempt <= 2 && !Task.isCancelled {
+                    try await Task.sleep(for: .seconds(Double(attempt)))
+                    continue
+                }
+                throw AnalysisError.network(error)
+            }
+        }
     }
 
     // MARK: - 结果清洗

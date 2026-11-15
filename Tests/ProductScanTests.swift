@@ -198,3 +198,52 @@ final class MiscTests: XCTestCase {
         XCTAssertNil(Pricing.costText(model: "unknown-model", usage: usage))
     }
 }
+
+/// 结果页追问
+final class FollowUpTests: XCTestCase {
+    func testMergedTurnsAlternate() {
+        let msgs = [FollowUpMessage(role: .assistant, text: "欢迎"),
+                    FollowUpMessage(role: .user, text: "和手机有什么区别？"),
+                    FollowUpMessage(role: .user, text: "续航呢？")]
+        let turns = AnalysisService.mergedTurns(msgs)
+        XCTAssertEqual(turns.count, 1)
+        XCTAssertEqual(turns[0].role, "user")
+        XCTAssertTrue(turns[0].text.contains("续航呢？"))
+    }
+
+    func testCleanReplyStripsThink() {
+        XCTAssertEqual(AnalysisService.cleanReply("<think>想想</think>\n 录音笔更专注录音。 "), "录音笔更专注录音。")
+    }
+
+    func testMessagesRoundTrip() throws {
+        let msgs = [FollowUpMessage(role: .user, text: "问"), FollowUpMessage(role: .assistant, text: "答", usageText: "u")]
+        let data = try JSONEncoder().encode(msgs)
+        XCTAssertEqual(try JSONDecoder().decode([FollowUpMessage].self, from: data), msgs)
+    }
+
+    func testSuggestionsForOther() {
+        XCTAssertTrue(ProductCategory.other.suggestedQuestions.contains { $0.contains("手机") })
+    }
+}
+
+/// 联网购物助手
+final class ShoppingTests: XCTestCase {
+    func testSearchURLEncodesChinese() throws {
+        let url = try XCTUnwrap(ShopSite.jd.searchURL("纯牛奶 250ml"))
+        XCTAssertEqual(url.host, "search.jd.com")
+        XCTAssertTrue(url.absoluteString.contains("%E7%BA%AF"))
+    }
+
+    func testPlatformMapping() {
+        XCTAssertEqual(ShopSite(loose: "天猫旗舰店"), .taobao)
+        XCTAssertEqual(ShopSite(loose: "1688批发"), .alibaba1688)
+        XCTAssertNil(ShopSite(loose: "山姆"))
+    }
+
+    func testItemDecodingDropsFakeURL() throws {
+        let data = Data(#"{"name":"某酸奶","price":12.5,"url":"javascript:alert(1)"}"#.utf8)
+        let item = try JSONDecoder().decode(ShoppingItem.self, from: data)
+        XCTAssertEqual(item.price, "12.5")
+        XCTAssertNil(item.webURL)
+    }
+}
