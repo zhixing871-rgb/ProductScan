@@ -17,6 +17,12 @@ final class ScanRecord {
     var resultData: Data
     var modelName: String?              // 用哪个 AI 模型分析的
     var sourceURL: String?              // 链接模式下的商品网址
+    var isFavorite: Bool = false        // 收藏
+    var specText: String?               // 用户填写的规格/净含量
+    var categoryWasAuto: Bool?          // 类别是否由 AI 自动判断（重新分析时沿用）
+    var inputTokens: Int?               // 本次分析用量
+    var outputTokens: Int?
+    var costText: String?               // 估算花费，如「约 $0.012」
 
     init(category: ProductCategory,
          productName: String,
@@ -43,6 +49,11 @@ final class ScanRecord {
     }
 
     var category: ProductCategory { ProductCategory(rawValue: categoryRaw) ?? .food }
+
+    var usage: TokenUsage? {
+        guard let i = inputTokens, let o = outputTokens else { return nil }
+        return TokenUsage(inputTokens: i, outputTokens: o)
+    }
 
     var result: AnalysisResult? {
         try? JSONDecoder().decode(AnalysisResult.self, from: resultData)

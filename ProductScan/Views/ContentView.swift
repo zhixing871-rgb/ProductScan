@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var showPrivacy = PrivacyView.needsConsent
+
     var body: some View {
         TabView {
             ScanView()
@@ -9,6 +11,12 @@ struct ContentView: View {
                 .tabItem { Label("历史", systemImage: "clock.arrow.circlepath") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
+        }
+        .sheet(isPresented: $showPrivacy) {
+            NavigationStack {
+                PrivacyView(isOnboarding: true) { showPrivacy = false }
+            }
+            .interactiveDismissDisabled()
         }
     }
 }

@@ -5,7 +5,7 @@ import PhotosUI
 struct ScanView: View {
     @Environment(\.modelContext) private var context
     @State private var vm = ScanViewModel()
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
     @State private var qrPhotoItem: PhotosPickerItem?
     @State private var showCamera = false
     @State private var showQRCamera = false
@@ -73,23 +73,21 @@ struct ScanView: View {
                 }
 
                 Section {
-                    Button {
-                        focused = false
-                        startAnalysis()
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if vm.isAnalyzing {
-                                ProgressView().padding(.trailing, 6)
-                                Text("AI 分析中…")
-                            } else {
-                                Label("开始分析", systemImage: "sparkles")
-                            }
-                            Spacer()
+                    if vm.isAnalyzing {
+                        AnalysisProgressView(stage: vm.stage, startedAt: vm.analysisStartedAt) {
+                            vm.cancelAnalysis()
                         }
-                        .font(.headline)
+                    } else {
+                        Button {
+                            focused = false
+                            startAnalysis()
+                        } label: {
+                            Label("开始分析", systemImage: "sparkles")
+                                .frame(maxWidth: .infinity)
+                                .font(.headline)
+                        }
+                        .disabled(!vm.canAnalyze)
                     }
-                    .disabled(!vm.canAnalyze)
                 } footer: {
                     if let summary = profileSummary {
                         Label("将结合你的情况分析：\(summary)", systemImage: "person.crop.circle")
@@ -103,18 +101,27 @@ struct ScanView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("清空") { vm.reset(); photoItem = nil; qrPhotoItem = nil }
+                    Button("清空") { vm.reset(); photoItems = []; qrPhotoItem = nil }
+                        .disabled(vm.isAnalyzing)
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("完成") { focused = false }
                 }
             }
-            .onChange(of: photoItem) { _, newItem in
-                guard let newItem else { return }
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
                 Task {
-                    if let img = await loadImage(newItem) { await vm.setImage(img) }
+                    for item in items {
+                        if let img = await loadImage(item) { await vm.addPhoto(img) }
+                    }
+                    photoItems = []
                 }
+            }
+            .onChange(of: vm.finishedRecord) { _, record in
+                guard let record else { return }
+                presentedRecord = record
+                vm.finishedRecord = nil
             }
             .onChange(of: qrPhotoItem) { _, newItem in
                 guard let newItem else { return }
@@ -125,7 +132,7 @@ struct ScanView: View {
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { img in
-                    Task { await vm.setImage(img) }
+                    Task { await vm.addPhoto(img) }
                 }
                 .ignoresSafeArea()
             }
@@ -156,17 +163,20 @@ struct ScanView: View {
                 Button {
                     showCamera = true
                 } label: {
-                    Label("拍照", systemImage: "camera")
+                    Label(vm.photos.isEmpty ? "拍照" : "再拍一张", systemImage: "camera")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!cameraAvailable)
+                .disabled(!cameraAvailable || !vm.canAddPhoto)
 
-                PhotosPicker(selection: $photoItem, matching: .images) {
+                PhotosPicker(selection: $photoItems,
+                             maxSelectionCount: max(1, ScanViewModel.maxPhotos - vm.photos.count),
+                             matching: .images) {
                     Label("相册", systemImage: "photo.on.rectangle")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .disabled(!vm.canAddPhoto)
             }
             if let link = vm.detectedLink {
                 Button {
@@ -180,7 +190,7 @@ struct ScanView: View {
         } header: {
             Text("配料表 / 成分标签")
         } footer: {
-            Text("拍清楚配料表、成分表或衣服的洗标；也可以直接拍商品正面，让 AI 识别是什么商品。")
+            Text("最多 \(ScanViewModel.maxPhotos) 张：建议分别拍商品正面、配料表/成分表、营养成分表；衣服拍洗标。")
         }
     }
 
@@ -281,11 +291,7 @@ struct ScanView: View {
     }
 
     private func startAnalysis() {
-        Task {
-            if let record = await vm.analyze(context: context) {
-                presentedRecord = record
-            }
-        }
+        vm.startAnalysis(context: context)
     }
 
     private func loadImage(_ item: PhotosPickerItem) async -> UIImage? {
@@ -295,23 +301,109 @@ struct ScanView: View {
 
     @ViewBuilder
     private var imageArea: some View {
-        if let image = vm.image, vm.sourceURL == nil {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxHeight: 240)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+        if !vm.photos.isEmpty && vm.sourceURL == nil {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(vm.photos.enumerated()), id: \.element.id) { index, photo in
+                        Image(uiImage: photo.image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 110, height: 140)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    vm.removePhoto(photo.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title3)
+                                        .symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                }
+                                .buttonStyle(.plain)
+                                .padding(4)
+                                .accessibilityLabel("删除第\(index + 1)张照片")
+                            }
+                            .overlay(alignment: .bottomLeading) {
+                                Text(photo.text.isEmpty ? "无文字" : "第\(index + 1)张")
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(.black.opacity(0.55), in: Capsule())
+                                    .foregroundStyle(.white)
+                                    .padding(6)
+                            }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "text.viewfinder")
                     .font(.system(size: 44))
                     .foregroundStyle(.secondary)
-                Text(cameraAvailable ? "拍照或从相册选择" : "模拟器无相机，请从相册选择")
+                Text(cameraAvailable ? "拍照或从相册选择（可多张）" : "模拟器无相机，请从相册选择")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 140)
+        }
+    }
+}
+
+/// 分析中：显示当前步骤、已用时间和取消按钮
+struct AnalysisProgressView: View {
+    let stage: AnalysisStage?
+    let startedAt: Date?
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                ProgressView()
+                Text(stage?.title ?? "准备中…").font(.headline)
+                Spacer()
+                if let startedAt {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text("\(Int(context.date.timeIntervalSince(startedAt))) 秒")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            StepDots(stage: stage)
+            Text("通常需要 15~60 秒，取决于模型和内容长度。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(role: .destructive, action: onCancel) {
+                Label("取消分析", systemImage: "xmark.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct StepDots: View {
+    let stage: AnalysisStage?
+
+    private var index: Int {
+        switch stage {
+        case .preparing, .none: return 0
+        case .waitingAI: return 1
+        case .parsing: return 2
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(["整理内容", "AI 分析", "解析结果"].enumerated()), id: \.offset) { i, title in
+                HStack(spacing: 4) {
+                    Image(systemName: i < index ? "checkmark.circle.fill" : (i == index ? "circle.dotted" : "circle"))
+                        .foregroundStyle(i <= index ? Color.accentColor : .secondary)
+                    Text(title).font(.caption).foregroundStyle(i <= index ? .primary : .secondary)
+                }
+                if i < 2 { Rectangle().fill(.quaternary).frame(height: 1) }
+            }
         }
     }
 }

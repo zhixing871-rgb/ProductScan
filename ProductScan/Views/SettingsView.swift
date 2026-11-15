@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var baseURL = ""
     @State private var saved = false
     @State private var profileSummary = ""
+    @State private var testing = false
+    @State private var testResult: (ok: Bool, text: String)?
 
     private var provider: AIProvider { AIProvider(rawValue: providerRaw) ?? .claude }
 
@@ -77,6 +79,25 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Button {
+                        runConnectionTest()
+                    } label: {
+                        HStack {
+                            if testing { ProgressView().padding(.trailing, 4) }
+                            Text(testing ? "测试中…" : "测试连接")
+                        }
+                    }
+                    .disabled(testing || apiKey.trimmed.isEmpty)
+                    if let testResult {
+                        Label(testResult.text, systemImage: testResult.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .font(.footnote)
+                            .foregroundStyle(testResult.ok ? .green : .red)
+                    }
+                } footer: {
+                    Text("用一段示例配料表真实调用一次当前模型，检查 Key、模型名、接口地址和结果解析是否正常（会产生很少的费用）。")
+                }
+
+                Section {
                     Toggle("把照片发给 AI 识别", isOn: $sendImage)
                     if sendImage && !provider.supportsVision(model: effectiveModel) {
                         Label("当前模型不支持图片，只会发送识别出的文字", systemImage: "info.circle")
@@ -114,6 +135,7 @@ struct SettingsView: View {
                 }
 
                 Section("关于") {
+                    NavigationLink("隐私说明") { PrivacyView() }
                     LabeledContent("本地知识库条目", value: "\(KnowledgeBase.entries.count)")
                     Text("文字识别使用 Apple Vision 在本机完成；识别后的文字（以及开启时的照片）会发送给所选 AI 服务商分析。")
                         .font(.footnote)
@@ -126,7 +148,7 @@ struct SettingsView: View {
                 let p = UserProfile.load()
                 profileSummary = p.enabled ? p.summary : "已关闭"
             }
-            .onChange(of: providerRaw) { _, _ in loadProviderSettings() }
+            .onChange(of: providerRaw) { _, _ in loadProviderSettings(); testResult = nil }
             .onChange(of: apiKey) { _, _ in saved = false }
             .onChange(of: modelChoice) { _, newValue in
                 if newValue != Self.customTag { model = newValue }
@@ -142,6 +164,31 @@ struct SettingsView: View {
 
     private var effectiveModel: String {
         modelChoice == Self.customTag ? model : modelChoice
+    }
+
+    private func runConnectionTest() {
+        // 先保存当前输入的 Key，测试用的是已保存的设置
+        KeychainHelper.save(apiKey.trimmed, for: provider.keychainAccount)
+        saved = true
+        testing = true
+        testResult = nil
+        let settings = AISettings.current()
+        let start = Date()
+        Task {
+            defer { testing = false }
+            do {
+                let input = AnalysisService.Input(
+                    category: nil, productName: "测试饮料", price: nil, currency: "CNY", spec: "",
+                    ocrText: "配料：水、白砂糖、柠檬酸、柠檬酸钠、食用香精、苯甲酸钠\n营养成分表 每100ml 能量 180kJ 糖 10.5g 钠 12mg")
+                let out = try await AnalysisService(settings: settings).analyze(input)
+                let seconds = String(format: "%.1f", Date().timeIntervalSince(start))
+                var text = "连接正常：\(settings.model)，用时 \(seconds) 秒，解析成功（\(out.result.ingredients.count) 个成分，结论「\(out.result.verdict)」）"
+                if let usage = out.usage { text += "\n" + Pricing.usageText(model: settings.model, usage: usage) }
+                testResult = (true, text)
+            } catch {
+                testResult = (false, error.localizedDescription)
+            }
+        }
     }
 
     private func loadProviderSettings() {

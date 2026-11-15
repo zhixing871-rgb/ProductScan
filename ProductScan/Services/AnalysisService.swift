@@ -21,6 +21,27 @@ enum AnalysisError: LocalizedError {
     }
 }
 
+/// 分析进度，用于界面显示
+enum AnalysisStage: Equatable {
+    case preparing
+    case waitingAI(String)
+    case parsing
+
+    var title: String {
+        switch self {
+        case .preparing: return "整理识别内容、匹配知识库…"
+        case .waitingAI(let name): return "\(name) 分析中…"
+        case .parsing: return "解析结果…"
+        }
+    }
+}
+
+/// 一次分析的输出
+struct AnalysisOutput {
+    var result: AnalysisResult
+    var usage: TokenUsage?
+}
+
 /// 商品分析 Agent：只做「商品成分 + 品牌/公司信息」分析，支持 Claude / GPT / DeepSeek / 千问。
 struct AnalysisService {
     let settings: AISettings
@@ -32,29 +53,37 @@ struct AnalysisService {
         var currency: String
         var spec: String
         var ocrText: String
-        var imageJPEG: Data?
+        var images: [Data] = []             // 最多 4 张照片（JPEG）
         var sourceURL: String? = nil        // 非空表示内容来自网页抓取
         var profile: UserProfile? = nil     // 用户个人信息（开启时）
     }
 
-    func analyze(_ input: Input) async throws -> AnalysisResult {
+    func analyze(_ input: Input,
+                 onStage: @escaping @MainActor (AnalysisStage) -> Void = { _ in }) async throws -> AnalysisOutput {
         guard !settings.apiKey.isEmpty else { throw AnalysisError.missingAPIKey(settings.provider) }
 
         let canSeeImage = settings.sendImage && settings.provider.supportsVision(model: settings.model)
-        let image = canSeeImage ? input.imageJPEG : nil
-        if input.ocrText.isEmpty && input.productName.isEmpty && image == nil {
-            if input.imageJPEG != nil && !canSeeImage { throw AnalysisError.imageNotSupported(settings.model) }
+        let images = canSeeImage ? Array(input.images.prefix(4)) : []
+        if input.ocrText.isEmpty && input.productName.isEmpty && images.isEmpty {
+            if !input.images.isEmpty && !canSeeImage { throw AnalysisError.imageNotSupported(settings.model) }
             throw AnalysisError.emptyInput
         }
 
-        let userText = buildUserMessage(input, hasImage: image != nil)
+        await onStage(.preparing)
+        let userText = buildUserMessage(input, imageCount: images.count)
+        try Task.checkCancellation()
+
+        await onStage(.waitingAI(settings.provider.shortTitle))
         let raw: Any
+        let usage: TokenUsage?
         switch settings.provider {
         case .claude:
-            raw = try await callClaude(userText: userText, image: image)
+            (raw, usage) = try await callClaude(userText: userText, images: images)
         case .openai, .deepseek, .qwen:
-            raw = try await callOpenAICompatible(userText: userText, image: image)
+            (raw, usage) = try await callOpenAICompatible(userText: userText, images: images)
         }
+        try Task.checkCancellation()
+        await onStage(.parsing)
 
         guard let dict = Self.normalize(raw) else {
             throw AnalysisError.badResponse("没有找到 JSON 对象：\(Self.preview(raw))")
@@ -84,14 +113,14 @@ struct AnalysisService {
         } else if let v = result.valueScore {
             result.valueScore = Self.clamp(v)
         }
-        return result
+        return AnalysisOutput(result: result, usage: usage)
     }
 
     // MARK: - Claude（工具调用强制结构化输出）
 
-    private func callClaude(userText: String, image: Data?) async throws -> Any {
+    private func callClaude(userText: String, images: [Data]) async throws -> (Any, TokenUsage?) {
         var content: [[String: Any]] = []
-        if let image {
+        for image in images {
             content.append(["type": "image",
                             "source": ["type": "base64", "media_type": "image/jpeg",
                                        "data": image.base64EncodedString()]])
@@ -100,10 +129,11 @@ struct AnalysisService {
 
         let body: [String: Any] = [
             "model": settings.model,
-            "max_tokens": 8192,
-            "system": Self.systemPrompt,
+            "max_tokens": 16000,   // 新模型默认开启思考，思考也占用输出 token
+            "system": Self.systemPrompt + "\n\n必须调用 report_analysis 工具输出结果，不要输出其他文字。",
             "tools": [Self.reportTool],
-            "tool_choice": ["type": "tool", "name": "report_analysis"],
+            // Sonnet 5.5 / Opus 5.5 不再支持强制指定工具（会返回 400），改用 auto + 提示词要求
+            "tool_choice": ["type": "auto"],
             "messages": [["role": "user", "content": content]]
         ]
         let json = try await post(path: "/messages", body: body, headers: [
@@ -111,28 +141,31 @@ struct AnalysisService {
             "anthropic-version": "2023-06-01"
         ])
 
-        if (json["stop_reason"] as? String) == "max_tokens" { throw AnalysisError.truncated }
+        let stop = json["stop_reason"] as? String
+        if stop == "max_tokens" { throw AnalysisError.truncated }
+        if stop == "refusal" { throw AnalysisError.badResponse("模型拒绝了这次请求") }
+        let usage = TokenUsage(json: json)
         let blocks = json["content"] as? [[String: Any]] ?? []
         if let toolUse = blocks.first(where: { ($0["type"] as? String) == "tool_use" }),
            let toolInput = toolUse["input"] {
-            return toolInput
+            return (toolInput, usage)
         }
         // 兜底：模型没调用工具而是直接输出了文字 JSON
-        let text = blocks.compactMap { $0["text"] as? String }.joined()
-        if !text.isEmpty { return text }
+        let text = blocks.filter { ($0["type"] as? String) == "text" }.compactMap { $0["text"] as? String }.joined()
+        if !text.isEmpty { return (text, usage) }
         throw AnalysisError.badResponse("没有工具调用结果")
     }
 
     // MARK: - OpenAI 兼容接口（GPT / DeepSeek / 千问）
 
-    private func callOpenAICompatible(userText: String, image: Data?) async throws -> Any {
+    private func callOpenAICompatible(userText: String, images: [Data]) async throws -> (Any, TokenUsage?) {
         let userContent: Any
-        if let image {
-            userContent = [
-                ["type": "image_url",
-                 "image_url": ["url": "data:image/jpeg;base64,\(image.base64EncodedString())"]],
-                ["type": "text", "text": userText]
-            ]
+        if !images.isEmpty {
+            var parts: [[String: Any]] = images.map {
+                ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\($0.base64EncodedString())"]]
+            }
+            parts.append(["type": "text", "text": userText])
+            userContent = parts
         } else {
             userContent = userText
         }
@@ -161,11 +194,12 @@ struct AnalysisService {
             throw AnalysisError.badResponse("没有 choices：\(Self.preview(json))")
         }
         if (choice["finish_reason"] as? String) == "length" { throw AnalysisError.truncated }
+        let usage = TokenUsage(json: json)
         let message = choice["message"] as? [String: Any] ?? [:]
-        if let text = message["content"] as? String, !text.isEmpty { return text }
+        if let text = message["content"] as? String, !text.isEmpty { return (text, usage) }
         if let parts = message["content"] as? [[String: Any]] {
             let text = parts.compactMap { $0["text"] as? String }.joined()
-            if !text.isEmpty { return text }
+            if !text.isEmpty { return (text, usage) }
         }
         throw AnalysisError.badResponse("模型没有返回内容")
     }
@@ -276,6 +310,13 @@ struct AnalysisService {
         return try? JSONSerialization.jsonObject(with: Data(repaired.utf8))
     }
 
+    /// 本机解析出的营养成分表，作为结构化数据提供给 AI
+    private static func nutritionLine(_ text: String) -> String {
+        guard let n = NutritionParser.parse(text), !n.items.isEmpty else { return "" }
+        let values = n.items.map { "\($0.nutrient.title) \($0.displayValue)" }.joined(separator: "，")
+        return "本机从营养成分表解析出（\(n.basisTitle)）：\(values)。请以此为准判断热量、糖、钠、脂肪是否偏高。\n"
+    }
+
     private static func preview(_ raw: Any) -> String {
         let s: String
         if let str = raw as? String { s = str }
@@ -290,7 +331,8 @@ struct AnalysisService {
 
     // MARK: - 提示词
 
-    private func buildUserMessage(_ input: Input, hasImage: Bool) -> String {
+    private func buildUserMessage(_ input: Input, imageCount: Int) -> String {
+        let hasImage = imageCount > 0
         let priceLine: String
         if let price = input.price {
             priceLine = "\(price) \(input.currency)（detectedPrice 填 null）"
@@ -327,7 +369,7 @@ struct AnalysisService {
         let imageLine = hasImage && input.sourceURL != nil
             ? "\n随消息附上了商品网页的截图，可用来辅助识别商品和价格。\n"
             : hasImage
-            ? "\n随消息附上了商品照片：请从照片中识别这是什么商品（品牌、品名、类型），并直接读取照片里的配料表/成分表/洗标。OCR 文字可能不完整或有错，以照片为准。\n"
+            ? "\n随消息附上了 \(imageCount) 张商品照片（可能分别是正面、配料表、营养成分表等）：请从照片中识别这是什么商品（品牌、品名、类型），并直接读取照片里的配料表/成分表/洗标。OCR 文字可能不完整或有错，以照片为准。\n"
             : ""
 
         let ocrBlock: String
@@ -380,7 +422,7 @@ struct AnalysisService {
         \(ocrBlock)
         \"\"\"
 
-        \(profileBlock)
+        \(profileBlock)\(Self.nutritionLine(input.ocrText))
         本地知识库命中的参考条目（作为参考，仍需你结合含量和配料位置判断\(input.category == nil ? "；方括号里是条目所属类别，只采用与你判断出的类别一致的条目" : "")）：
         \(kbBlock)
 

@@ -25,3 +25,26 @@ targets:
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+  ProductScanTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: ProductScan
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zhixing.productscan.tests
+        DEVELOPMENT_TEAM: 8T4ZML6C5S
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+schemes:
+  ProductScan:
+    build:
+      targets:
+        ProductScan: all
+        ProductScanTests: [test]
+    test:
+      targets:
+        - ProductScanTests

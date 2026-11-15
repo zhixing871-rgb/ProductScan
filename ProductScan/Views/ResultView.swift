@@ -1,11 +1,36 @@
 import SwiftUI
 
+import SwiftData
+
 struct ResultView: View {
     let record: ScanRecord
+
+    @Environment(\.modelContext) private var context
+    @State private var reanalyzeStage: AnalysisStage?
+    @State private var reanalyzeStarted: Date?
+    @State private var reanalyzeTask: Task<Void, Never>?
+    @State private var reanalyzeError: String?
+    @State private var newRecord: ScanRecord?
+    @State private var shareImage: UIImage?
+    @State private var profile = UserProfile.load()
 
     var body: some View {
         if let r = record.result {
             List {
+                if reanalyzeTask != nil {
+                    Section {
+                        AnalysisProgressView(stage: reanalyzeStage, startedAt: reanalyzeStarted) {
+                            reanalyzeTask?.cancel()
+                        }
+                    } header: {
+                        Text("正在用 \(AISettings.current().model) 重新分析")
+                    }
+                }
+                if let reanalyzeError {
+                    Section {
+                        Label(reanalyzeError, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    }
+                }
                 header(r)
                 allergenBanner
                 personalSection(r)
@@ -19,6 +44,10 @@ struct ResultView: View {
                     } else {
                         Text("未填写价格，未进行性价比评分").foregroundStyle(.secondary).font(.callout)
                     }
+                }
+
+                if let facts = NutritionParser.parse(record.ocrText, spec: record.specText ?? "") {
+                    NutritionSection(facts: facts, profile: profile)
                 }
 
                 Section("总体分析") {
@@ -63,6 +92,10 @@ struct ResultView: View {
                         if let modelName = record.modelName {
                             Text("分析模型：\(modelName)")
                         }
+                        if let usage = record.usage {
+                            Text("本次用量：输入 \(usage.inputTokens) + 输出 \(usage.outputTokens) tokens"
+                                 + (record.costText.map { "，\($0)（按公开价估算）" } ?? ""))
+                        }
                         Text("分析由 AI 根据标签文字生成，可信度：\(r.confidence)。仅供参考，不构成医疗或专业建议；公司信息可能不是最新的，请自行核实。")
                     }
                     .font(.footnote)
@@ -71,8 +104,59 @@ struct ResultView: View {
             }
             .navigationTitle(record.productName.isEmpty ? r.productName : record.productName)
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { profile = UserProfile.load() }
+            .task { shareImage = ShareCardView.render(record: record, result: r) }
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        record.isFavorite.toggle()
+                        try? context.save()
+                    } label: {
+                        Image(systemName: record.isFavorite ? "star.fill" : "star")
+                    }
+                    .accessibilityLabel(record.isFavorite ? "取消收藏" : "收藏")
+
+                    if let shareImage {
+                        ShareLink(item: Image(uiImage: shareImage),
+                                  preview: SharePreview(record.productName.isEmpty ? r.productName : record.productName,
+                                                        image: Image(uiImage: shareImage))) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+
+                    Menu {
+                        Button {
+                            reanalyze()
+                        } label: {
+                            Label("用当前模型重新分析", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(reanalyzeTask != nil)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .navigationDestination(item: $newRecord) { ResultView(record: $0) }
         } else {
             ContentUnavailableView("结果解析失败", systemImage: "exclamationmark.triangle")
+        }
+    }
+
+    private func reanalyze() {
+        reanalyzeError = nil
+        reanalyzeStarted = .now
+        reanalyzeStage = .preparing
+        reanalyzeTask = Task {
+            defer { reanalyzeTask = nil; reanalyzeStage = nil }
+            do {
+                newRecord = try await AnalysisRunner.reanalyze(record, context: context) { reanalyzeStage = $0 }
+            } catch is CancellationError {
+                reanalyzeError = "已取消"
+            } catch let e as URLError where e.code == .cancelled {
+                reanalyzeError = "已取消"
+            } catch {
+                reanalyzeError = error.localizedDescription
+            }
         }
     }
 
@@ -113,7 +197,7 @@ struct ResultView: View {
     /// 本地检查：配料里命中用户设置的过敏原（不依赖 AI，实时按当前个人信息计算）
     @ViewBuilder
     private var allergenBanner: some View {
-        let hits = AllergenChecker.check(record.ocrText + " " + record.productName, profile: UserProfile.load())
+        let hits = AllergenChecker.check(record.ocrText + " " + record.productName, profile: profile)
         if !hits.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
